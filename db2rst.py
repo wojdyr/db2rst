@@ -13,16 +13,32 @@
 
     :copyright: 2009 by Marcin Wojdyr.
     :license: BSD.
-
-    TODO: labels, (inline)mediaobject
 """
 
-
+# ReST doesn't support inline comments, so XML comments are converted
+# to ReST comment blocks, what may break paragraphs.
 REMOVE_COMMENTS = False
+
+# id attributes of DocBook elements are translated to ReST labels.
+# If this option is False, only labels that are used in links are generated.
+WRITE_UNUSED_LABELS = False
 
 import sys
 import re
 import lxml.etree as ET
+
+# to avoid dupliate error reports
+_not_handled_tags = set()
+
+# to remember which id/labels are really needed
+_linked_ids = set()
+
+# to avoid duplicate substitutions
+_substitutions = set()
+
+# Buffer that is flushed after the end of paragraph, may contain e.g. 
+# substitutions.
+_buffer = ""
 
 def _main():
     if len(sys.argv) != 2:
@@ -32,6 +48,9 @@ def _main():
     sys.stderr.write("Parsing XML file `%s'...\n" % input_file)
     parser = ET.XMLParser(remove_comments=REMOVE_COMMENTS)
     tree = ET.parse(input_file, parser=parser)
+    for elem in tree.getiterator():
+        if elem.tag in ("xref", "link"):
+            _linked_ids.add(elem.get("linkend"))
     print TreeRoot(tree.getroot())
 
 def _warn(s):
@@ -66,8 +85,6 @@ def _has_no_text(el):
         if i.tail is not None and not i.tail.isspace():
             _warn("skipping tail of <%s>: %s" % (_get_path(i), i.tail))
 
-_not_handled_tags = []
-
 def _conv(el):
     "element to string conversion; usually calls element_name() to do the job"
     if el.tag in globals():
@@ -80,7 +97,7 @@ def _conv(el):
         if el.tag not in _not_handled_tags:
             _warn("Don't know how to handle <%s>" % el.tag)
             #_warn(" ... from path: %s" % _get_path(el))
-            _not_handled_tags.append(el.tag)
+            _not_handled_tags.add(el.tag)
         return _concat(el)
 
 def _no_special_markup(el):
@@ -88,17 +105,25 @@ def _no_special_markup(el):
 
 def _remove_indent_and_escape(s):
     "remove indentation from the string s, escape some of the special chars"
-    return "\n".join(i.lstrip().replace("\\", "\\\\")
-                               .replace("|", "\|")
-                               .replace("*,","\*,")
-                     for i in s.splitlines())
+    s = "\n".join(i.lstrip().replace("\\", "\\\\") for i in s.splitlines())
+    # escape inline mark-up start-string characters (even if there is no
+    # end-string, docutils show warning if the start-string is not escaped)
+    # TODO: handle also Unicode: ‘ “ ’ « ¡ ¿ as preceding chars
+    s = re.sub(r"([\s'\"([{</:-])" # start-string is preceded by one of these
+               r"([|*`[])" # the start-string
+               r"(\S)",    # start-string is followed by non-whitespace
+               r"\1\\\2\3", # insert backslash
+               s)
+    return s
 
 def _concat(el):
     "concatate .text with children (_conv'ed to text) and their tails"
+    s = ""
+    id = el.get("id")
+    if id is not None and (WRITE_UNUSED_LABELS or id in _linked_ids):
+        s += "\n\n.. _%s:\n\n" % id
     if el.text is not None:
-        s = _remove_indent_and_escape(el.text)
-    else:
-        s = ""
+        s += _remove_indent_and_escape(el.text)
     for i in el.getchildren():
         s += _conv(i)
         if i.tail is not None:
@@ -134,8 +159,13 @@ def _join_children(el, sep):
     _has_no_text(el)
     return sep.join(_conv(i) for i in el.getchildren())
 
-def _just_make_sure_its_separated_with_blank_line(el):
-    return "\n\n" + _concat(el)
+def _block_separated_with_blank_line(el):
+    s = "\n\n" + _concat(el)
+    global _buffer
+    if _buffer:
+        s += "\n\n" + _buffer
+        _buffer = ""
+    return s
 
 def _indent(el, indent, first_line=None):
     "returns indented block with exactly one blank line at the beginning"
@@ -145,6 +175,9 @@ def _indent(el, indent, first_line=None):
         # replace indentation of the first line with prefix `first_line'
         lines[0] = first_line + lines[0][indent:]
     return "\n\n" + "\n".join(lines)
+
+def _normalize_whitespace(s):
+    return " ".join(s.split())
 
 ###################           DocBook elements        #####################
 
@@ -206,7 +239,7 @@ def link(el):
 
 def inlineequation(el):
     _supports_only(el, ("inlinemediaobject",))
-    return _concat(el)
+    return _concat(el).strip()
 
 def informalequation(el):
     _supports_only(el, ("mediaobject",))
@@ -216,19 +249,44 @@ def equation(el):
     _supports_only(el, ("title", "mediaobject"))
     title = el.find("title")
     if title is not None:
-        s = "\n\n**%s:**"
+        s = "\n\n**%s:**" % _concat(title).strip()
     else:
         s = ""
     for mo in el.findall("mediaobject"):
         s += "\n" + _conv(mo)
     return s
 
-# TODO:
-#def mediaobject(el):
-#    return "xxx"
-#
-#def inlinemediaobject(el):
-#    return "xxx"
+def mediaobject(el, substitute=False):
+    _supports_only(el, ("imageobject", "textobject"))
+    # i guess the most common case is one imageobject and one (or none)
+    alt = ""
+    for txto in el.findall("textobject"):
+        _supports_only(txto, ("phrase",))
+        if alt:
+            alt += "; "
+        alt += _normalize_whitespace(_concat(txto.find("phrase")))
+    symbols = []
+    for imgo in el.findall("imageobject"):
+        _supports_only(imgo, ("imagedata",))
+        fileref = imgo.find("imagedata").get("fileref")
+        if substitute:
+            symbols.append(fileref)
+            s = "\n\n.. |%s| image:: %s" % (fileref, fileref)
+        else:
+            s = "\n\n.. image:: %s" % fileref
+        if (alt):
+            s += "\n   :alt: %s" % alt
+    s += "\n\n"
+    if substitute:
+        return s, symbols
+    else:
+        return s
+
+def inlinemediaobject(el):
+    global _buffer
+    subst, symbols = mediaobject(el, substitute=True)
+    _buffer += subst
+    return "".join("|%s|" % i for i in symbols)
 
 def subscript(el):
     return "\ :sub:`%s`" % _concat(el).strip()
@@ -294,7 +352,7 @@ def cmdsynopsis(el):
 # programming elements
 
 def function(el):
-    _has_only_text(el)
+    #_has_only_text(el)
     #return ":func:`%s`" % _concat(el)
     return "``%s``" % _concat(el).strip()
 
@@ -325,10 +383,10 @@ def blockquote(el):
     return _indent(el, 4)
 
 book = _no_special_markup
-para = _just_make_sure_its_separated_with_blank_line
-section = _just_make_sure_its_separated_with_blank_line
-appendix = _just_make_sure_its_separated_with_blank_line
-chapter = _just_make_sure_its_separated_with_blank_line
+para = _block_separated_with_blank_line
+section = _block_separated_with_blank_line
+appendix = _block_separated_with_blank_line
+chapter = _block_separated_with_blank_line
 
 
 # lists
