@@ -257,6 +257,7 @@ def equation(el):
     return s
 
 def mediaobject(el, substitute=False):
+    global _substitutions
     _supports_only(el, ("imageobject", "textobject"))
     # i guess the most common case is one imageobject and one (or none)
     alt = ""
@@ -266,21 +267,25 @@ def mediaobject(el, substitute=False):
             alt += "; "
         alt += _normalize_whitespace(_concat(txto.find("phrase")))
     symbols = []
+    img = ""
     for imgo in el.findall("imageobject"):
         _supports_only(imgo, ("imagedata",))
         fileref = imgo.find("imagedata").get("fileref")
-        if substitute:
-            symbols.append(fileref)
-            s = "\n\n.. |%s| image:: %s" % (fileref, fileref)
-        else:
-            s = "\n\n.. image:: %s" % fileref
+        s = "\n\n.. image:: %s" % fileref
         if (alt):
             s += "\n   :alt: %s" % alt
-    s += "\n\n"
+        if substitute:
+            if fileref not in _substitutions:
+                img += s[:4] + " |%s|" % fileref + s[4:] # insert |symbol|
+                _substitutions.add(fileref)
+            symbols.append(fileref)
+        else:
+            img += s
+    img += "\n\n"
     if substitute:
-        return s, symbols
+        return img, symbols
     else:
-        return s
+        return img
 
 def inlinemediaobject(el):
     global _buffer
