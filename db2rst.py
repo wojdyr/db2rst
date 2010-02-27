@@ -15,8 +15,10 @@
     :license: BSD.
 """
 
-# ReST doesn't support inline comments, so XML comments are converted
-# to ReST comment blocks, what may break paragraphs.
+# If this option is True, XML comment are discarded. Otherwise, they are
+# converted to ReST comments.
+# Note that ReST doesn't support inline comments. XML comments
+# are converted to ReST comment blocks, what may break paragraphs.
 REMOVE_COMMENTS = False
 
 # id attributes of DocBook elements are translated to ReST labels.
@@ -36,8 +38,8 @@ _linked_ids = set()
 # to avoid duplicate substitutions
 _substitutions = set()
 
-# Buffer that is flushed after the end of paragraph, may contain e.g. 
-# substitutions.
+# buffer that is flushed after the end of paragraph,
+# used for ReST substitutions
 _buffer = ""
 
 def _main():
@@ -214,7 +216,9 @@ acronym = _no_special_markup
 def ulink(el):
     url = el.get("url")
     text = _concat(el).strip()
-    if url == text:
+    if text.startswith(".. image::"):
+        return "%s\n   :target: %s\n\n" % (text, url)
+    elif url == text:
         return text
     else:
         return "`%s <%s>`_" % (text, url)
@@ -382,12 +386,15 @@ def title(el):
 
 def screen(el):
     # we don't want a blank line between :: and text
-    return "\n::\n" + _indent(el, 4)[1:] + "\n"
+    return "\n::\n" + _indent(el, 4) + "\n"
+
+literallayout = screen
 
 def blockquote(el):
     return _indent(el, 4)
 
 book = _no_special_markup
+article = _no_special_markup
 para = _block_separated_with_blank_line
 section = _block_separated_with_blank_line
 appendix = _block_separated_with_blank_line
