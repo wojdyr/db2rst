@@ -385,7 +385,6 @@ def title(el):
     return _make_title(t, level)
 
 def screen(el):
-    # we don't want a blank line between :: and text
     return "\n::\n" + _indent(el, 4) + "\n"
 
 literallayout = screen
