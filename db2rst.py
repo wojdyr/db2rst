@@ -53,7 +53,7 @@ def _main():
     for elem in tree.getiterator():
         if elem.tag in ("xref", "link"):
             _linked_ids.add(elem.get("linkend"))
-    print TreeRoot(tree.getroot())
+    print TreeRoot(tree.getroot()).encode('utf-8')
 
 def _warn(s):
     sys.stderr.write("WARNING: %s\n" % s)
