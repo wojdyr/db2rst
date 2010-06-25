@@ -3,11 +3,17 @@
 """
     DocBook to ReST converter
     =========================
-    This script probably won't work out of the box. You may need to tweak or
-    enhance it and/or manually tweak the output. Anyway, it makes the work
-    easier. Send me any patches you have: wojdyr at gmail. 
+    This script may not work out of the box, but is easy to extend.
+    If you extend it, please send me a patch: wojdyr at gmail. 
 
+    Docbook has >400 elements, most of them are not supported (yet).
     ``pydoc db2rst`` shows the list of supported elements.
+
+    In reST, inline markup can not be nested (major deficiency of reST).
+    Since it is not clear what to do with, say,
+    <subscript><emphasis>x</emphasis></subscript>
+    the script outputs incorrect (nested) reST (:sub:`*x*`)
+    and it is up to user to decide how to change it.
 
     Usage: db2rst.py file.xml > file.rst
 
@@ -43,7 +49,7 @@ _substitutions = set()
 _buffer = ""
 
 def _main():
-    if len(sys.argv) != 2:
+    if len(sys.argv) != 2 or sys.argv[1] == '-h' or sys.argv[1] == '--help':
         sys.stderr.write(__doc__)
         sys.exit()
     input_file = sys.argv[1]
